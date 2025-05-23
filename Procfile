@@ -1,1 +1,2 @@
-worker: sh start.sh
+worker: python bot_cupons_final.py
+
