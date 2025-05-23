@@ -108,7 +108,7 @@ def enviar_cupons():
     enviar_produto_com_botao("Promo Amazon", "https://amazon.com.br/exemplo")
     enviar_produto_com_botao("Oferta AliExpress", "https://aliexpress.com/exemplo")
 
-schedule.every(15).minutes.do(enviar_cupons)
+schedule.every(10).minutes.do(enviar_cupons)
 
 print("Bot de cupons rodando...")
 while True:
