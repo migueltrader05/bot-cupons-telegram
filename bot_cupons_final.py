@@ -7,14 +7,21 @@ import schedule
 import os
 from telegram import Bot
 
+# --- Verificação de variáveis obrigatórias ---
+def get_env_var(name):
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"Variável de ambiente obrigatória '{name}' não está definida.")
+    return value
+
 # --- Configurações do Telegram via variáveis de ambiente ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GROUP_ID = int(os.getenv("GROUP_ID"))
+TELEGRAM_TOKEN = get_env_var("TELEGRAM_TOKEN")
+GROUP_ID = int(get_env_var("GROUP_ID"))
 bot = Bot(token=TELEGRAM_TOKEN)
 
 # --- Configurações da Shopee Partners ---
-partner_id = os.getenv("SHOPEE_PARTNER_ID")
-partner_key = os.getenv("SHOPEE_PARTNER_KEY")
+partner_id = get_env_var("SHOPEE_PARTNER_ID")
+partner_key = get_env_var("SHOPEE_PARTNER_KEY")
 base_url = "https://partner.shopee.com.br"
 path = "/api/v2/product/search"
 
