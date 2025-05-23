@@ -23,7 +23,7 @@ bot = Bot(token=TELEGRAM_TOKEN)
 # --- Configurações da Shopee Partners ---
 partner_id = get_env_var("SHOPEE_PARTNER_ID")
 partner_key = get_env_var("SHOPEE_PARTNER_KEY")
-base_url = "https://partner.shopee.com.br"
+base_url = "base_url = "https://partner.shopeemobile.com"
 path = "/api/v2/product/search"
 
 def gerar_assinatura(path, timestamp):
