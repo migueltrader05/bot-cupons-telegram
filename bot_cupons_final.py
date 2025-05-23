@@ -5,6 +5,7 @@ import json
 import requests
 import schedule
 import os
+import asyncio
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 # --- Verificação de variáveis obrigatórias ---
@@ -76,41 +77,46 @@ def buscar_produtos_shopee():
 
     return mensagens
 
-def enviar_produto_com_botao(nome, link, imagem=None):
+async def enviar_produto_com_botao(nome, link, imagem=None):
     botao = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔗 Ver oferta", url=link)]
     ])
 
     if imagem:
-        bot.send_photo(
+        await bot.send_photo(
             chat_id=GROUP_ID,
             photo=imagem,
             caption=f"🛍️ {nome}",
             reply_markup=botao
         )
     else:
-        bot.send_message(
+        await bot.send_message(
             chat_id=GROUP_ID,
             text=f"🛍️ {nome}",
             reply_markup=botao
         )
 
-def enviar_cupons():
-    enviar_produto_com_botao("Oferta Mercado Livre", "https://www.mercadolivre.com.br/ofertas?matt_tool=afiliados&tag=migu")
+async def enviar_cupons():
+    await enviar_produto_com_botao("Oferta Mercado Livre", "https://www.mercadolivre.com.br/ofertas?matt_tool=afiliados&tag=migu")
 
     try:
         produtos = buscar_produtos_shopee()
         for prod in produtos:
-            enviar_produto_com_botao(prod["nome"], prod["link"], prod["imagem"])
+            await enviar_produto_com_botao(prod["nome"], prod["link"], prod["imagem"])
     except Exception as e:
-        bot.send_message(chat_id=GROUP_ID, text=f"⚠️ Erro ao buscar Shopee: {str(e)}")
+        await bot.send_message(chat_id=GROUP_ID, text=f"⚠️ Erro ao buscar Shopee: {str(e)}")
 
-    enviar_produto_com_botao("Promo Amazon", "https://amazon.com.br/exemplo")
-    enviar_produto_com_botao("Oferta AliExpress", "https://aliexpress.com/exemplo")
+    await enviar_produto_com_botao("Promo Amazon", "https://amazon.com.br/exemplo")
+    await enviar_produto_com_botao("Oferta AliExpress", "https://aliexpress.com/exemplo")
 
-schedule.every(10).minutes.do(enviar_cupons)
+def agendar_tarefa():
+    schedule.every(15).minutes.do(lambda: asyncio.create_task(enviar_cupons()))
 
-print("Bot de cupons rodando...")
-while True:
-    schedule.run_pending()
-    time.sleep(1)
+    print("Bot de cupons rodando...")
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+if __name__ == "__main__":
+    asyncio.run(enviar_cupons())
+    agendar_tarefa()
