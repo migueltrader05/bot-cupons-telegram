@@ -13,8 +13,8 @@ GROUP_ID = int(os.getenv("GROUP_ID"))
 bot = Bot(token=TELEGRAM_TOKEN)
 
 # --- Configurações da Shopee Partners ---
-partner_id = 18389690042
-partner_key = "4YRPD6OLPJXSEERAW66WY6KLIOJJA5NZ"
+partner_id = os.getenv("SHOPEE_PARTNER_ID")
+partner_key = os.getenv("SHOPEE_PARTNER_KEY")
 base_url = "https://partner.shopee.com.br"
 path = "/api/v2/product/search"
 
