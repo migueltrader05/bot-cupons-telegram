@@ -1,2 +1,3 @@
-worker: python bot_cupons_final.py
+worker: python verificar_variaveis.py
+
 
