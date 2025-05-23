@@ -44,12 +44,12 @@ def buscar_produtos_shopee():
     data = response.json()
 
     mensagens = []
-    for item in data["result_list"]["item_list"]:
-    nome = item.get("item_basic", {}).get("name", "Produto")
-    itemid = item.get("item_basic", {}).get("itemid")
-    link = f"https://shope.ee/{itemid}"
-    mensagens.append(f"🛍️ {nome}\n🔗 {link}")
-
+    if "result_list" in data and "item_list" in data["result_list"]:
+        for item in data["result_list"]["item_list"]:
+            nome = item.get("item_basic", {}).get("name", "Produto")
+            itemid = item.get("item_basic", {}).get("itemid")
+            link = f"https://shope.ee/{itemid}"
+            mensagens.append(f"🛍️ {nome}\n🔗 {link}")
 
     return mensagens
 
