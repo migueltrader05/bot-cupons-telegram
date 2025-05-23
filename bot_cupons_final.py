@@ -5,7 +5,7 @@ import json
 import requests
 import schedule
 import os
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 # --- Verificação de variáveis obrigatórias ---
 def get_env_var(name):
@@ -33,6 +33,15 @@ def gerar_assinatura(path, timestamp):
         hashlib.sha256
     ).hexdigest()
 
+def encurtar_link(url):
+    try:
+        response = requests.get(f"http://tinyurl.com/api-create.php?url={url}")
+        if response.status_code == 200:
+            return response.text
+    except:
+        pass
+    return url
+
 def buscar_produtos_shopee():
     timestamp = int(time.time())
     sign = gerar_assinatura(path, timestamp)
@@ -55,28 +64,49 @@ def buscar_produtos_shopee():
         for item in data["result_list"]["item_list"]:
             nome = item.get("item_basic", {}).get("name", "Produto")
             itemid = item.get("item_basic", {}).get("itemid")
-            link = f"https://shope.ee/{itemid}"
-            mensagens.append(f"🛍️ {nome}\n🔗 {link}")
+            imagem = item.get("item_basic", {}).get("image")
+            link = encurtar_link(f"https://shope.ee/{itemid}")
+            imagem_url = f"https://cf.shopee.com.br/file/{imagem}" if imagem else None
+
+            mensagens.append({
+                "nome": nome,
+                "imagem": imagem_url,
+                "link": link
+            })
 
     return mensagens
 
-def enviar_cupons():
-    mensagens = []
+def enviar_produto_com_botao(nome, link, imagem=None):
+    botao = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔗 Ver oferta", url=link)]
+    ])
 
-    # Mercado Livre com etiqueta 'migu'
-    link_ml = "https://www.mercadolivre.com.br/ofertas?matt_tool=afiliados&tag=migu"
-    mensagens.append(f"🔥 Oferta Mercado Livre: {link_ml}")
+    if imagem:
+        bot.send_photo(
+            chat_id=GROUP_ID,
+            photo=imagem,
+            caption=f"🛍️ {nome}",
+            reply_markup=botao
+        )
+    else:
+        bot.send_message(
+            chat_id=GROUP_ID,
+            text=f"🛍️ {nome}",
+            reply_markup=botao
+        )
+
+def enviar_cupons():
+    enviar_produto_com_botao("Oferta Mercado Livre", "https://www.mercadolivre.com.br/ofertas?matt_tool=afiliados&tag=migu")
 
     try:
-        mensagens += buscar_produtos_shopee()
+        produtos = buscar_produtos_shopee()
+        for prod in produtos:
+            enviar_produto_com_botao(prod["nome"], prod["link"], prod["imagem"])
     except Exception as e:
-        mensagens.append("Erro ao buscar cupons da Shopee: " + str(e))
+        bot.send_message(chat_id=GROUP_ID, text=f"⚠️ Erro ao buscar Shopee: {str(e)}")
 
-    mensagens.append("📦 Promo Amazon: https://amazon.com.br/exemplo")
-    mensagens.append("🌍 Oferta AliExpress: https://aliexpress.com/exemplo")
-
-    for mensagem in mensagens:
-        bot.send_message(chat_id=GROUP_ID, text=mensagem)
+    enviar_produto_com_botao("Promo Amazon", "https://amazon.com.br/exemplo")
+    enviar_produto_com_botao("Oferta AliExpress", "https://aliexpress.com/exemplo")
 
 schedule.every(15).minutes.do(enviar_cupons)
 
