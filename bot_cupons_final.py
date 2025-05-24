@@ -113,14 +113,20 @@ def enviar_cupons():
 
     try:
         produtos = buscar_produtos_shopee()
-        for prod in produtos:
-            enviar_produto_estilizado(
-                nome=prod["nome"],
-                link=prod["link"],
-                imagem=prod["imagem"],
-                preco_de=prod.get("preco_de"),
-                preco_por=prod.get("preco_por")
-            )
+        if not produtos:
+            bot.send_message(chat_id=GROUP_ID, text="⚠️ Nenhum produto foi encontrado na Shopee.")
+        else:
+            for prod in produtos:
+                try:
+                    enviar_produto_estilizado(
+                        nome=prod.get("nome", "Produto sem nome"),
+                        link=prod.get("link", "#"),
+                        imagem=prod.get("imagem"),
+                        preco_de=prod.get("preco_de", "R$ ???"),
+                        preco_por=prod.get("preco_por", "R$ ???")
+                    )
+                except Exception as item_error:
+                    bot.send_message(chat_id=GROUP_ID, text=f"❌ Erro ao enviar produto: {str(item_error)}")
     except Exception as e:
         bot.send_message(chat_id=GROUP_ID, text=f"⚠️ Erro ao buscar Shopee: {str(e)}")
 
