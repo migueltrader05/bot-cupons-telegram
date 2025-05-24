@@ -5,8 +5,7 @@ import json
 import requests
 import schedule
 import os
-import asyncio
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Bot
 
 # --- Verificação de variáveis obrigatórias ---
 def get_env_var(name):
@@ -23,7 +22,7 @@ bot = Bot(token=TELEGRAM_TOKEN)
 # --- Configurações da Shopee Partners ---
 partner_id = get_env_var("SHOPEE_PARTNER_ID")
 partner_key = get_env_var("SHOPEE_PARTNER_KEY")
-base_url = base_url = "https://partner.shopeemobile.com"
+base_url = "https://partner.shopeemobile.com"
 path = "/api/v2/product/search"
 
 def gerar_assinatura(path, timestamp):
@@ -49,7 +48,7 @@ def buscar_produtos_shopee():
 
     url = f"{base_url}{path}?partner_id={partner_id}&timestamp={timestamp}&sign={sign}"
     payload = {
-        "keyword": "oferta",
+        "keyword": "sofá",
         "page_size": 3
     }
 
@@ -72,51 +71,78 @@ def buscar_produtos_shopee():
             mensagens.append({
                 "nome": nome,
                 "imagem": imagem_url,
-                "link": link
+                "link": link,
+                "preco_de": "R$ 999,00",
+                "preco_por": "R$ 599,00"
             })
 
     return mensagens
 
-async def enviar_produto_com_botao(nome, link, imagem=None):
-    botao = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔗 Ver oferta", url=link)]
-    ])
+def enviar_produto_estilizado(nome, link, imagem=None, preco_de="R$ ???", preco_por="R$ ???"):
+    legenda = (
+        f"🎁 <b>{nome}</b>\n\n"
+        f"💰 De: <s>{preco_de}</s>\n"
+        f"👉 Por: <b>{preco_por}</b>\n\n"
+        f"🔗 <a href='{link}'>Link p/ comprar</a>\n\n"
+        f"🚀👀 Para mais ofertas e cupons, acesse:\n"
+        f"<a href='https://linktr.ee/grupocupons'>linktr.ee/grupocupons</a>"
+    )
 
     if imagem:
-        await bot.send_photo(
+        bot.send_photo(
             chat_id=GROUP_ID,
             photo=imagem,
-            caption=f"🛍️ {nome}",
-            reply_markup=botao
+            caption=legenda,
+            parse_mode="HTML"
         )
     else:
-        await bot.send_message(
+        bot.send_message(
             chat_id=GROUP_ID,
-            text=f"🛍️ {nome}",
-            reply_markup=botao
+            text=legenda,
+            parse_mode="HTML"
         )
 
-async def enviar_cupons():
-    await enviar_produto_com_botao("Oferta Mercado Livre", "https://www.mercadolivre.com.br/ofertas?matt_tool=afiliados&tag=migu")
+def enviar_cupons():
+    enviar_produto_estilizado(
+        nome="Oferta Mercado Livre",
+        link="https://www.mercadolivre.com.br/ofertas?matt_tool=afiliados&tag=migu",
+        imagem="https://http2.mlstatic.com/frontend-assets/ml-web-navigation/ui-navigation/5.19.1/mercado-libre-logo__large_plus.png",
+        preco_de="R$ 299,00",
+        preco_por="R$ 199,00"
+    )
 
     try:
         produtos = buscar_produtos_shopee()
         for prod in produtos:
-            await enviar_produto_com_botao(prod["nome"], prod["link"], prod["imagem"])
+            enviar_produto_estilizado(
+                nome=prod["nome"],
+                link=prod["link"],
+                imagem=prod["imagem"],
+                preco_de=prod.get("preco_de"),
+                preco_por=prod.get("preco_por")
+            )
     except Exception as e:
-        await bot.send_message(chat_id=GROUP_ID, text=f"⚠️ Erro ao buscar Shopee: {str(e)}")
+        bot.send_message(chat_id=GROUP_ID, text=f"⚠️ Erro ao buscar Shopee: {str(e)}")
 
-    await enviar_produto_com_botao("Promo Amazon", "https://amazon.com.br/exemplo")
-    await enviar_produto_com_botao("Oferta AliExpress", "https://aliexpress.com/exemplo")
+    enviar_produto_estilizado(
+        nome="Promo Amazon",
+        link="https://amazon.com.br/exemplo",
+        imagem="https://logodownload.org/wp-content/uploads/2014/04/amazon-logo-1.png",
+        preco_de="R$ 189,00",
+        preco_por="R$ 119,00"
+    )
 
-def agendar_tarefa():
-    schedule.every(15).minutes.do(lambda: asyncio.create_task(enviar_cupons()))
+    enviar_produto_estilizado(
+        nome="Oferta AliExpress",
+        link="https://aliexpress.com/exemplo",
+        imagem="https://upload.wikimedia.org/wikipedia/commons/1/1e/AliExpress_logo.svg",
+        preco_de="R$ 120,00",
+        preco_por="R$ 79,90"
+    )
 
-    print("Bot de cupons rodando...")
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
+schedule.every(15).minutes.do(enviar_cupons)
 
-if __name__ == "__main__":
-    asyncio.run(enviar_cupons())
-    agendar_tarefa()
+print("Bot de cupons rodando...")
+while True:
+    schedule.run_pending()
+    time.sleep(1)
