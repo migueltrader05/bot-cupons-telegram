@@ -5,6 +5,7 @@ import json
 import requests
 import schedule
 import os
+import asyncio
 from telegram import Bot
 
 # --- Verificação de variáveis obrigatórias ---
@@ -43,42 +44,45 @@ def encurtar_link(url):
     return url
 
 def buscar_produtos_shopee():
+    palavras_chave = ["sofá", "oferta", "promoção"]
     timestamp = int(time.time())
     sign = gerar_assinatura(path, timestamp)
-
     url = f"{base_url}{path}?partner_id={partner_id}&timestamp={timestamp}&sign={sign}"
-    payload = {
-        "keyword": "sofá",
-        "page_size": 3
-    }
+    headers = {"Content-Type": "application/json"}
 
-    headers = {
-        "Content-Type": "application/json"
-    }
+    for palavra in palavras_chave:
+        payload = {"keyword": palavra, "page_size": 3}
+        response = requests.post(url, headers=headers, json=payload)
+        print("Shopee API response:", response.text)
 
-    response = requests.post(url, headers=headers, json=payload)
-    data = response.json()
+        if response.status_code != 200:
+            continue
 
-    mensagens = []
-    if "result_list" in data and "item_list" in data["result_list"]:
-        for item in data["result_list"]["item_list"]:
-            nome = item.get("item_basic", {}).get("name", "Produto")
-            itemid = item.get("item_basic", {}).get("itemid")
-            imagem = item.get("item_basic", {}).get("image")
-            link = encurtar_link(f"https://shope.ee/{itemid}")
-            imagem_url = f"https://cf.shopee.com.br/file/{imagem}" if imagem else None
+        data = response.json()
+        mensagens = []
 
-            mensagens.append({
-                "nome": nome,
-                "imagem": imagem_url,
-                "link": link,
-                "preco_de": "R$ 999,00",
-                "preco_por": "R$ 599,00"
-            })
+        if "result_list" in data and "item_list" in data["result_list"]:
+            for item in data["result_list"]["item_list"]:
+                nome = item.get("item_basic", {}).get("name", "Produto")
+                itemid = item.get("item_basic", {}).get("itemid")
+                imagem = item.get("item_basic", {}).get("image")
+                link = encurtar_link(f"https://shope.ee/{itemid}")
+                imagem_url = f"https://cf.shopee.com.br/file/{imagem}" if imagem else None
 
-    return mensagens
+                mensagens.append({
+                    "nome": nome,
+                    "imagem": imagem_url,
+                    "link": link,
+                    "preco_de": "R$ 999,00",
+                    "preco_por": "R$ 599,00"
+                })
 
-def enviar_produto_estilizado(nome, link, imagem=None, preco_de="R$ ???", preco_por="R$ ???"):
+        if mensagens:
+            return mensagens
+
+    return []
+
+async def enviar_produto_estilizado(nome, link, imagem=None, preco_de="R$ ???", preco_por="R$ ???"):
     legenda = (
         f"🎁 <b>{nome}</b>\n\n"
         f"💰 De: <s>{preco_de}</s>\n"
@@ -89,21 +93,21 @@ def enviar_produto_estilizado(nome, link, imagem=None, preco_de="R$ ???", preco_
     )
 
     if imagem:
-        bot.send_photo(
+        await bot.send_photo(
             chat_id=GROUP_ID,
             photo=imagem,
             caption=legenda,
             parse_mode="HTML"
         )
     else:
-        bot.send_message(
+        await bot.send_message(
             chat_id=GROUP_ID,
             text=legenda,
             parse_mode="HTML"
         )
 
-def enviar_cupons():
-    enviar_produto_estilizado(
+async def enviar_cupons():
+    await enviar_produto_estilizado(
         nome="Oferta Mercado Livre",
         link="https://www.mercadolivre.com.br/ofertas?matt_tool=afiliados&tag=migu",
         imagem="https://http2.mlstatic.com/frontend-assets/ml-web-navigation/ui-navigation/5.19.1/mercado-libre-logo__large_plus.png",
@@ -114,41 +118,24 @@ def enviar_cupons():
     try:
         produtos = buscar_produtos_shopee()
         if not produtos:
-            bot.send_message(chat_id=GROUP_ID, text="⚠️ Nenhum produto foi encontrado na Shopee.")
-        else:
-            for prod in produtos:
-                try:
-                    enviar_produto_estilizado(
-                        nome=prod.get("nome", "Produto sem nome"),
-                        link=prod.get("link", "#"),
-                        imagem=prod.get("imagem"),
-                        preco_de=prod.get("preco_de", "R$ ???"),
-                        preco_por=prod.get("preco_por", "R$ ???")
-                    )
-                except Exception as item_error:
-                    bot.send_message(chat_id=GROUP_ID, text=f"❌ Erro ao enviar produto: {str(item_error)}")
+            await bot.send_message(chat_id=GROUP_ID, text="⚠️ Nenhum produto foi encontrado na Shopee.")
+        for prod in produtos:
+            await enviar_produto_estilizado(
+                nome=prod["nome"],
+                link=prod["link"],
+                imagem=prod["imagem"],
+                preco_de=prod.get("preco_de"),
+                preco_por=prod.get("preco_por")
+            )
     except Exception as e:
-        bot.send_message(chat_id=GROUP_ID, text=f"⚠️ Erro ao buscar Shopee: {str(e)}")
+        await bot.send_message(chat_id=GROUP_ID, text=f"⚠️ Erro ao buscar Shopee: {str(e)}")
 
-    enviar_produto_estilizado(
-        nome="Promo Amazon",
-        link="https://amazon.com.br/exemplo",
-        imagem="https://logodownload.org/wp-content/uploads/2014/04/amazon-logo-1.png",
-        preco_de="R$ 189,00",
-        preco_por="R$ 119,00"
-    )
+def agendar():
+    schedule.every(15).minutes.do(lambda: asyncio.run(enviar_cupons()))
+    print("Bot de cupons rodando...")
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
 
-    enviar_produto_estilizado(
-        nome="Oferta AliExpress",
-        link="https://aliexpress.com/exemplo",
-        imagem="https://upload.wikimedia.org/wikipedia/commons/1/1e/AliExpress_logo.svg",
-        preco_de="R$ 120,00",
-        preco_por="R$ 79,90"
-    )
-
-schedule.every(15).minutes.do(enviar_cupons)
-
-print("Bot de cupons rodando...")
-while True:
-    schedule.run_pending()
-    time.sleep(1)
+if __name__ == "__main__":
+    agendar()
