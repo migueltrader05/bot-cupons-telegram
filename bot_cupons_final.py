@@ -44,43 +44,40 @@ def encurtar_link(url):
     return url
 
 def buscar_produtos_shopee():
-    palavras_chave = ["sofá", "oferta", "promoção"]
     timestamp = int(time.time())
     sign = gerar_assinatura(path, timestamp)
+
     url = f"{base_url}{path}?partner_id={partner_id}&timestamp={timestamp}&sign={sign}"
-    headers = {"Content-Type": "application/json"}
+    payload = {
+        "keyword": "sofá",
+        "page_size": 3
+    }
 
-    for palavra in palavras_chave:
-        payload = {"keyword": palavra, "page_size": 3}
-        response = requests.post(url, headers=headers, json=payload)
-        print("Shopee API response:", response.text)
+    headers = {
+        "Content-Type": "application/json"
+    }
 
-        if response.status_code != 200:
-            continue
+    response = requests.post(url, headers=headers, json=payload)
+    data = response.json()
 
-        data = response.json()
-        mensagens = []
+    mensagens = []
+    if "result_list" in data and "item_list" in data["result_list"]:
+        for item in data["result_list"]["item_list"]:
+            nome = item.get("item_basic", {}).get("name", "Produto")
+            itemid = item.get("item_basic", {}).get("itemid")
+            imagem = item.get("item_basic", {}).get("image")
+            link = encurtar_link(f"https://shope.ee/{itemid}")
+            imagem_url = f"https://cf.shopee.com.br/file/{imagem}" if imagem else None
 
-        if "result_list" in data and "item_list" in data["result_list"]:
-            for item in data["result_list"]["item_list"]:
-                nome = item.get("item_basic", {}).get("name", "Produto")
-                itemid = item.get("item_basic", {}).get("itemid")
-                imagem = item.get("item_basic", {}).get("image")
-                link = encurtar_link(f"https://shope.ee/{itemid}")
-                imagem_url = f"https://cf.shopee.com.br/file/{imagem}" if imagem else None
+            mensagens.append({
+                "nome": nome,
+                "imagem": imagem_url,
+                "link": link,
+                "preco_de": "R$ 999,00",
+                "preco_por": "R$ 599,00"
+            })
 
-                mensagens.append({
-                    "nome": nome,
-                    "imagem": imagem_url,
-                    "link": link,
-                    "preco_de": "R$ 999,00",
-                    "preco_por": "R$ 599,00"
-                })
-
-        if mensagens:
-            return mensagens
-
-    return []
+    return mensagens
 
 async def enviar_produto_estilizado(nome, link, imagem=None, preco_de="R$ ???", preco_por="R$ ???"):
     legenda = (
@@ -130,12 +127,12 @@ async def enviar_cupons():
     except Exception as e:
         await bot.send_message(chat_id=GROUP_ID, text=f"⚠️ Erro ao buscar Shopee: {str(e)}")
 
-def agendar():
-    schedule.every(15).minutes.do(lambda: asyncio.run(enviar_cupons()))
+async def loop_agendador():
+    schedule.every(15).minutes.do(lambda: asyncio.create_task(enviar_cupons()))
     print("Bot de cupons rodando...")
     while True:
         schedule.run_pending()
-        time.sleep(1)
+        await asyncio.sleep(1)
 
 if __name__ == "__main__":
-    agendar()
+    asyncio.run(loop_agendador())
