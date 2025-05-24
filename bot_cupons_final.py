@@ -45,15 +45,6 @@ try:
     GROUP_ID = int(get_env_var("GROUP_ID"))
     ADMIN_CHAT_ID = get_env_var("ADMIN_CHAT_ID", required=False)
 
-    SHOPEE_CONFIG = {
-        "partner_id": get_env_var("SHOPEE_PARTNER_ID"),
-        "partner_key": get_env_var("SHOPEE_PARTNER_KEY"),
-        "base_url": get_env_var("SHOPEE_BASE_URL", "https://partner.shopeemobile.com"),
-        "page_size": int(get_env_var("SHOPEE_PAGE_SIZE", "5")),
-        "max_retries": int(get_env_var("SHOPEE_MAX_RETRIES", "3")),
-        "retry_delay": int(get_env_var("SHOPEE_RETRY_DELAY", "5")),
-    }
-
     SCHEDULE_INTERVAL = int(get_env_var("SCHEDULE_INTERVAL_MINUTES", "10"))
     ACTIVE_HOURS = {
         "start": int(get_env_var("ACTIVE_HOURS_START", "9")),
@@ -61,26 +52,38 @@ try:
     }
 
     bot = Bot(token=TELEGRAM_TOKEN)
+
 except (ConfigurationError, ValueError) as e:
     logger.error(f"Erro de configuração: {str(e)}")
     raise
 
+# --- Categorias fixas para envio ---
+CATEGORIAS = {
+    "Eletrônicos": 11036732,
+    "Beleza": 11036649,
+    "Casa": 11036842,
+    "Moda": 11036000,
+    "Acessórios": 11036893,
+    "Bebê": 11036043
+}
+
 # --- Utilitários ---
-def gerar_assinatura(path: str, timestamp: int) -> str:
-    base_string = f"{SHOPEE_CONFIG['partner_id']}{path}{timestamp}"
+def gerar_assinatura(path: str, timestamp: int, partner_id: str, partner_key: str) -> str:
+    base_string = f"{partner_id}{path}{timestamp}"
     return hmac.new(
-        SHOPEE_CONFIG['partner_key'].encode(),
+        partner_key.encode(),
         base_string.encode(),
         hashlib.sha256
     ).hexdigest()
 
 async def encurtar_link(url: str) -> str:
-    try:
-        response = requests.get(f"http://tinyurl.com/api-create.php?url={url}", timeout=5)
-        if response.status_code == 200:
-            return response.text
-    except:
-        pass
+    for _ in range(3):
+        try:
+            response = requests.get(f"http://tinyurl.com/api-create.php?url={url}", timeout=5)
+            if response.status_code == 200:
+                return response.text
+        except requests.RequestException:
+            await asyncio.sleep(2)
     return url
 
 async def notify_admin(message: str) -> None:
@@ -90,123 +93,114 @@ async def notify_admin(message: str) -> None:
         except Exception as e:
             logger.error(f"Falha ao notificar admin: {str(e)}")
 
-# --- API Shopee: Busca por palavra-chave ---
-async def buscar_destaques_shopee() -> List[Dict]:
-    path = "/api/v2/product/search"
+# --- API Shopee por categoria ---
+async def buscar_mais_vendidos_categoria(categoria_id: int) -> List[Dict]:
+    partner_id = get_env_var("SHOPEE_PARTNER_ID")
+    partner_key = get_env_var("SHOPEE_PARTNER_KEY")
+    base_url = "https://partner.shopeemobile.com"
+    path = "/api/v2/product/get_item_list"
     timestamp = int(time.time())
-    sign = gerar_assinatura(path, timestamp)
+    sign = gerar_assinatura(path, timestamp, partner_id, partner_key)
 
-    url = f"{SHOPEE_CONFIG['base_url']}{path}?partner_id={SHOPEE_CONFIG['partner_id']}&timestamp={timestamp}&sign={sign}"
-
+    url = f"{base_url}{path}?partner_id={partner_id}&timestamp={timestamp}&sign={sign}"
     payload = {
-        "keyword": "promoção",
-        "page_size": SHOPEE_CONFIG["page_size"]
+        "category_id": categoria_id,
+        "sort_by": "pop",
+        "page_size": 5,
+        "offset": 0,
+        "filter": "feeds"
     }
-
     headers = {"Content-Type": "application/json"}
 
-    for attempt in range(SHOPEE_CONFIG["max_retries"]):
+    for attempt in range(3):
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=10)
+            response = requests.post(url, headers=headers, json=payload, timeout=15)
             response.raise_for_status()
             data = response.json()
 
+            if not data.get("items"):
+                return []
+
             produtos = []
-            if "result_list" in data and "item_list" in data["result_list"]:
-                for item in data["result_list"]["item_list"]:
-                    item_basic = item.get("item_basic", {})
+            for item in data["items"]:
+                basic = item.get("item_basic", {})
+                if basic.get("sold", 0) < 50:
+                    continue
 
-                    nome = item_basic.get("name", "Produto sem nome")
-                    itemid = item_basic.get("itemid")
-                    imagem = item_basic.get("image")
-                    link = await encurtar_link(f"https://shope.ee/{itemid}")
-                    imagem_url = f"https://cf.shopee.com.br/file/{imagem}" if imagem else None
+                nome = basic.get("name", "Produto")
+                itemid = basic.get("itemid")
+                imagem = basic.get("image")
+                link = await encurtar_link(f"https://shope.ee/{itemid}")
+                imagem_url = f"https://cf.shopee.com.br/file/{imagem}" if imagem else None
+                preco_de = basic.get("price_before_discount", basic.get("price", 0)) / 100000
+                preco_por = basic.get("price", 0) / 100000
+                rating = basic.get("item_rating", {}).get("rating_star", 0)
+                vendas = basic.get("sold", 0)
 
-                    produtos.append({
-                        "nome": nome,
-                        "imagem": imagem_url,
-                        "link": link,
-                        "preco_original": "R$ 299,00",
-                        "preco_atual": "R$ 199,00",
-                        "vendas": 100,
-                        "rating": 5,
-                        "loja": "Shopee"
-                    })
+                produtos.append({
+                    "nome": nome,
+                    "imagem": imagem_url,
+                    "link": link,
+                    "preco_original": f"R$ {preco_de:,.2f}".replace(",", "v").replace(".", ",").replace("v", "."),
+                    "preco_atual": f"R$ {preco_por:,.2f}".replace(",", "v").replace(".", ",").replace("v", "."),
+                    "rating": rating,
+                    "vendas": vendas
+                })
             return produtos
 
-        except requests.RequestException as e:
-            logger.error(f"Erro na conexão (tentativa {attempt + 1}): {str(e)}")
-            if attempt == SHOPEE_CONFIG["max_retries"] - 1:
-                raise APIConnectionError("Falha ao buscar produtos")
-            await asyncio.sleep(SHOPEE_CONFIG["retry_delay"])
+        except Exception as e:
+            logger.error(f"Erro na conexão (tentativa {attempt+1}): {e}")
+            await asyncio.sleep(3)
+    raise APIConnectionError("Falha após 3 tentativas")
 
-# --- Enviar mensagem ---
-async def enviar_produto_estilizado(produto: Dict) -> None:
+# --- Envio Telegram ---
+async def enviar_produto_estilizado(produto: Dict, titulo: str) -> None:
     legenda = (
-        f"🎁 <b>{produto['nome']}</b>\n\n"
-        f"💰 De: <s>{produto['preco_original']}</s>\n"
-        f"👉 Por: <b>{produto['preco_atual']}</b>\n\n"
-        f"🔗 <a href='{produto['link']}'>Compre agora</a>\n\n"
-        f"🚀👀 Para mais ofertas, acesse:\n<a href='https://linktr.ee/grupocupons'>linktr.ee/grupocupons</a>"
+        f"🔥 <b>{titulo}</b> 🔥\n"
+        f"🛍️ <b>{produto['nome'][:100]}</b>\n"
+        f"⭐ {produto['rating']} | 📈 {produto['vendas']} vendidos\n"
+        f"💰 De: <s>{produto['preco_original']}</s>\n👉 Por: <b>{produto['preco_atual']}</b>\n\n"
+        f"🔗 <a href='{produto['link']}'>Comprar com desconto</a>"
     )
+    if produto["imagem"]:
+        await bot.send_photo(GROUP_ID, produto["imagem"], caption=legenda, parse_mode="HTML")
+    else:
+        await bot.send_message(GROUP_ID, text=legenda, parse_mode="HTML")
 
-    try:
-        if produto["imagem"]:
-            await bot.send_photo(
-                chat_id=GROUP_ID,
-                photo=produto["imagem"],
-                caption=legenda,
-                parse_mode="HTML"
-            )
-        else:
-            await bot.send_message(
-                chat_id=GROUP_ID,
-                text=legenda,
-                parse_mode="HTML"
-            )
-        logger.info(f"Produto enviado: {produto['nome']}")
-    except Exception as e:
-        logger.error(f"Erro ao enviar produto: {str(e)}")
-
-# --- Loop principal ---
-async def enviar_destaques():
+async def enviar_relatorio_geral():
     hora = time.localtime().tm_hour
     if not (ACTIVE_HOURS["start"] <= hora < ACTIVE_HOURS["end"]):
-        logger.info("Fora do horário ativo")
+        logger.info("Fora do horário de envio")
         return
 
-    try:
-        produtos = await buscar_destaques_shopee()
-        if not produtos:
-            await bot.send_message(
-                chat_id=GROUP_ID,
-                text="📊 Nenhum destaque encontrado no momento.",
-                parse_mode="HTML"
-            )
-            return
+    for nome, categoria_id in CATEGORIAS.items():
+        try:
+            await bot.send_message(GROUP_ID, text=f"🔎 Buscando os mais vendidos em {nome}...", parse_mode="HTML")
+            produtos = await buscar_mais_vendidos_categoria(categoria_id)
+            if not produtos:
+                await bot.send_message(GROUP_ID, text=f"⚠️ Nenhum produto popular encontrado em {nome}.")
+                continue
+            for prod in produtos:
+                await enviar_produto_estilizado(prod, nome)
+                await asyncio.sleep(2)
+        except Exception as e:
+            logger.error(f"Erro em categoria {nome}: {e}")
+            await notify_admin(f"Erro em categoria {nome}: {e}")
 
-        await bot.send_message(
-            chat_id=GROUP_ID,
-            text="🏆 <b>DESTAQUES EM PROMOÇÃO</b> 🏆",
-            parse_mode="HTML"
-        )
-
-        for produto in produtos:
-            await enviar_produto_estilizado(produto)
-            await asyncio.sleep(2)
-    except Exception as e:
-        logger.error(f"Erro inesperado: {str(e)}")
-        await notify_admin(f"Erro no envio de destaques: {str(e)}")
-
+# --- Agendamento ---
 async def loop_principal():
-    schedule.every(SCHEDULE_INTERVAL).minutes.do(
-        lambda: asyncio.create_task(enviar_destaques())
-    )
-
-    logger.info("🔁 Bot agendado para rodar...")
+    schedule.every(SCHEDULE_INTERVAL).minutes.do(lambda: asyncio.create_task(enviar_relatorio_geral()))
+    logger.info("📅 Bot agendado para rodar...")
     while True:
         schedule.run_pending()
         await asyncio.sleep(1)
 
 if __name__ == "__main__":
-    asyncio.run(loop_principal())
+    try:
+        asyncio.run(loop_principal())
+    except KeyboardInterrupt:
+        logger.info("Bot encerrado pelo usuário")
+    except Exception as e:
+        logger.critical(f"Falha crítica: {e}")
+        raise
+
