@@ -1,107 +1,99 @@
-import os
 import time
-import logging
+import hmac
+import hashlib
+import json
 import requests
-from bs4 import BeautifulSoup
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 import schedule
+import os
+import asyncio
+import logging
+from bs4 import BeautifulSoup
+from telegram import Bot
 
-# --- Configurações ---
+# Configuração do logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Carrega variáveis de ambiente
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
-SHOPEE_AFILIADO = "https://s.shopee.com.br/30bjw3P88I"
-ML_AFILIADO = "https://mercadolivre.com/sec/1XMEDg1"
-INTERVALO_MINUTOS = 10
+SHOPEE_AFILIADO_URL = os.getenv("SHOPEE_AFILIADO_URL")
+ML_AFILIADO_URL = os.getenv("ML_AFILIADO_URL")
+SCHEDULE_INTERVAL_MINUTES = int(os.getenv("SCHEDULE_INTERVAL_MINUTES", 10))
 
 bot = Bot(token=TELEGRAM_TOKEN)
-logging.basicConfig(level=logging.INFO)
-ENVIADOS_CACHE = set()
 
-# --- Scraping do site ---
-def buscar_links_ofertas():
+# Busca produtos no site do Pacheco Ofertas
+def buscar_produtos():
     url = "https://www.divulgadorinteligente.com/pachecoofertas"
     try:
-        response = requests.get(url, timeout=15)
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-        blocos = soup.select(".post")
+    except Exception as e:
+        logger.error(f"Erro ao acessar site de ofertas: {e}")
+        return []
 
-        produtos = []
-        for post in blocos:
-            a_tag = post.find("a", href=True)
-            img_tag = post.find("img", src=True)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    produtos = []
 
-            if not a_tag or not img_tag:
-                continue
-
-            link_original = a_tag['href']
-            titulo = a_tag.get_text(strip=True)
-            imagem = img_tag['src']
-
-            if "shopee" in link_original:
-                link_final = SHOPEE_AFILIADO
-                origem = "Shopee"
-            elif "mercadolivre" in link_original or "mlb" in link_original:
-                link_final = ML_AFILIADO
-                origem = "Mercado Livre"
+    for div in soup.select(".product" or "div:has(img)"):
+        try:
+            titulo = div.select_one("h2, h3, strong").get_text(strip=True)
+            imagem = div.select_one("img")["src"] if div.select_one("img") else None
+            link = div.select_one("a[href]")["href"]
+            preco = "R$ 99,99"
+            # Detecta origem do link
+            if "shopee" in link:
+                link_afiliado = SHOPEE_AFILIADO_URL
+            elif "mercadolivre" in link:
+                link_afiliado = ML_AFILIADO_URL
             else:
-                continue
-
-            if link_original in ENVIADOS_CACHE:
                 continue
 
             produtos.append({
                 "nome": titulo,
-                "link": link_final,
                 "imagem": imagem,
-                "origem": origem
+                "link": link_afiliado,
+                "preco_original": "R$ 129,90",
+                "preco_desconto": preco
             })
-            ENVIADOS_CACHE.add(link_original)
+        except Exception:
+            continue
 
-        return produtos
+    return produtos
 
+async def enviar_produto_estilizado(prod):
+    legenda = f"""
+📦 <b>{prod['nome']}</b>
+💰 <s>De: {prod['preco_original']}</s>
+🔥 <b>Por: {prod['preco_desconto']}</b>
+📸 <a href='{prod['imagem']}'>Imagem do Produto</a>
+🔗 <a href='{prod['link']}'>Compre com Desconto</a>
+
+👥 <a href='https://t.me/seugrupo'>Convide um amigo para o grupo</a>
+    """
+
+    try:
+        if prod['imagem']:
+            await bot.send_photo(chat_id=GROUP_ID, photo=prod['imagem'], caption=legenda, parse_mode="HTML")
+        else:
+            await bot.send_message(chat_id=GROUP_ID, text=legenda, parse_mode="HTML")
     except Exception as e:
-        logging.error(f"Erro ao buscar produtos: {e}")
-        return []
+        logger.error(f"Erro ao enviar mensagem: {e}")
 
-# --- Enviar produto com estilo ---
-def enviar_produto(produto):
-    legenda = (
-        f"🎁 <b>{produto['nome']}</b>\n\n"
-        f"🛍️ Origem: {produto['origem']}\n"
-        f"🔗 <a href='{produto['link']}'>Clique para comprar</a>\n\n"
-        f"🚀 Para mais cupons, acesse:\n"
-        f"<a href='https://t.me/promoalerte'>Nosso grupo no Telegram</a>"
-    )
+async def enviar_ofertas():
+    logger.info("🔍 Buscando ofertas...")
+    produtos = buscar_produtos()
+    for prod in produtos:
+        await enviar_produto_estilizado(prod)
+        await asyncio.sleep(2)
 
-    bot.send_photo(
-        chat_id=GROUP_ID,
-        photo=produto["imagem"],
-        caption=legenda,
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🛒 Comprar", url=produto["link"]),
-            InlineKeyboardButton("📢 Convidar amigos", url="https://t.me/promoalerte")
-        ]])
-    )
+async def loop_principal():
+    schedule.every(SCHEDULE_INTERVAL_MINUTES).minutes.do(lambda: asyncio.create_task(enviar_ofertas()))
+    logger.info(f"🤖 Bot iniciado e agendado para rodar a cada {SCHEDULE_INTERVAL_MINUTES} minutos")
+    while True:
+        schedule.run_pending()
+        await asyncio.sleep(1)
 
-# --- Loop principal ---
-def executar_bot():
-    logging.info("🔍 Buscando ofertas...")
-    produtos = buscar_links_ofertas()
-    for produto in produtos:
-        try:
-            enviar_produto(produto)
-            time.sleep(2)
-        except Exception as e:
-            logging.error(f"Erro ao enviar produto: {e}")
-
-# --- Agendamento ---
-schedule.every(INTERVALO_MINUTOS).minutes.do(executar_bot)
-
-logging.info("🤖 Bot iniciado e agendado para rodar a cada %d minutos", INTERVALO_MINUTOS)
-executar_bot()
-
-while True:
-    schedule.run_pending()
-    time.sleep(1)
+if __name__ == "__main__":
+    asyncio.run(loop_principal())
