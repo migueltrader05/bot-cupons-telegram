@@ -1,5 +1,4 @@
-python-telegram-bot==20.7
-schedule
-requests
-python-dotenv
 beautifulsoup4
+requests
+python-telegram-bot==13.15
+schedule
