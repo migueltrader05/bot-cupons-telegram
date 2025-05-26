@@ -35,10 +35,20 @@ HEADERS = {
 def converter_amazon(link):
     if "amazon.com.br" in link:
         if "tag=" in link:
-            return link  # já contém ID de afiliado
+            return link
         separador = "&" if "?" in link else "?"
         return f"{link}{separador}tag={AMAZON_AFILIADO_ID}"
     return link
+
+def identificar_origem(link):
+    if "shopee" in link:
+        return "Shopee"
+    elif "mercadolivre" in link:
+        return "Mercado Livre"
+    elif "amazon" in link:
+        return "Amazon"
+    else:
+        return "Outros"
 
 def buscar_produtos():
     produtos = []
@@ -50,43 +60,42 @@ def buscar_produtos():
             for link_tag in soup.find_all("a", href=True):
                 link = link_tag["href"]
                 texto = link_tag.get_text(strip=True)
+                origem = identificar_origem(link)
+
                 if "shopee" in link:
-                    produtos.append({
-                        "nome": texto or "Produto Shopee",
-                        "imagem": None,
-                        "link": SHOPEE_AFILIADO_URL,
-                        "preco_original": "R$ 149,00",
-                        "preco_desconto": "R$ 99,00"
-                    })
+                    link_convertido = SHOPEE_AFILIADO_URL
                 elif "mercadolivre" in link:
-                    produtos.append({
-                        "nome": texto or "Produto Mercado Livre",
-                        "imagem": None,
-                        "link": ML_AFILIADO_URL,
-                        "preco_original": "R$ 199,00",
-                        "preco_desconto": "R$ 139,00"
-                    })
+                    link_convertido = ML_AFILIADO_URL
                 elif "amazon.com.br" in link:
-                    produtos.append({
-                        "nome": texto or "Oferta Amazon",
-                        "imagem": None,
-                        "link": converter_amazon(link),
-                        "preco_original": "R$ 129,00",
-                        "preco_desconto": "R$ 89,00"
-                    })
+                    link_convertido = converter_amazon(link)
+                else:
+                    continue
+
+                produtos.append({
+                    "nome": texto or f"Produto {origem}",
+                    "imagem": None,
+                    "link": link_convertido,
+                    "preco_original": "R$ 149,00",
+                    "preco_desconto": "R$ 99,00",
+                    "origem": origem
+                })
         except Exception as e:
             logger.error(f"Erro ao acessar {site}: {e}")
     return produtos
 
 async def enviar_produto_estilizado(prod):
     legenda = f"""
-📦 <b>{prod['nome']}</b>
-💰 <s>De: {prod['preco_original']}</s>
-🔥 <b>Por: {prod['preco_desconto']}</b>
-🔗 <a href='{prod['link']}'>Compre com Desconto</a>
+🔥 <b>{prod['nome']}</b>
 
-👥 <a href='https://t.me/seugrupo'>Convide um amigo para o grupo</a>
-    """
+🏬 Loja: <i>{prod['origem']}</i>
+💸 De: <s>{prod['preco_original']}</s>
+👉 Por: <b>{prod['preco_desconto']}</b>
+
+🛍️ <a href='{prod['link']}'>Clique aqui para comprar</a>
+
+📢 Compartilhe com amigos e receba mais ofertas:
+👉 <a href='https://t.me/seugrupo'>Entrar no grupo VIP</a>
+"""
 
     try:
         if prod['imagem']:
@@ -97,6 +106,11 @@ async def enviar_produto_estilizado(prod):
         logger.error(f"Erro ao enviar mensagem: {e}")
 
 async def enviar_ofertas():
+    hora_atual = time.localtime().tm_hour
+    if hora_atual < 7 or hora_atual >= 23:
+        logger.info("⏰ Fora do horário permitido (7h–23h). Ignorando execução.")
+        return
+
     logger.info("🔍 Buscando ofertas...")
     produtos = buscar_produtos()
     for prod in produtos:
@@ -117,4 +131,3 @@ async def loop_principal():
 
 if __name__ == "__main__":
     asyncio.run(loop_principal())
-
