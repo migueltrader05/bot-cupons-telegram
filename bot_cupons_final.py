@@ -17,6 +17,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 SHOPEE_AFILIADO_URL = os.getenv("SHOPEE_AFILIADO_URL")
 ML_AFILIADO_URL = os.getenv("ML_AFILIADO_URL")
+AMAZON_AFILIADO_ID = os.getenv("AMAZON_AFILIADO_ID", "maxx0448-20")
 SCHEDULE_INTERVAL_MINUTES = int(os.getenv("SCHEDULE_INTERVAL_MINUTES", 10))
 
 bot = Bot(token=TELEGRAM_TOKEN)
@@ -30,6 +31,14 @@ URLS_FONTE = [
 HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
+
+def converter_amazon(link):
+    if "amazon.com.br" in link:
+        if "tag=" in link:
+            return link  # já contém ID de afiliado
+        separador = "&" if "?" in link else "?"
+        return f"{link}{separador}tag={AMAZON_AFILIADO_ID}"
+    return link
 
 def buscar_produtos():
     produtos = []
@@ -56,6 +65,14 @@ def buscar_produtos():
                         "link": ML_AFILIADO_URL,
                         "preco_original": "R$ 199,00",
                         "preco_desconto": "R$ 139,00"
+                    })
+                elif "amazon.com.br" in link:
+                    produtos.append({
+                        "nome": texto or "Oferta Amazon",
+                        "imagem": None,
+                        "link": converter_amazon(link),
+                        "preco_original": "R$ 129,00",
+                        "preco_desconto": "R$ 89,00"
                     })
         except Exception as e:
             logger.error(f"Erro ao acessar {site}: {e}")
@@ -100,3 +117,4 @@ async def loop_principal():
 
 if __name__ == "__main__":
     asyncio.run(loop_principal())
+
