@@ -34,28 +34,29 @@ def buscar_links_ofertas():
             if not a_tag or not img_tag:
                 continue
 
-            link = a_tag['href']
+            link_original = a_tag['href']
             titulo = a_tag.get_text(strip=True)
             imagem = img_tag['src']
 
-            # Shopee ou Mercado Livre
-            if "shopee" in link:
+            if "shopee" in link_original:
                 link_final = SHOPEE_AFILIADO
-            elif "mercadolivre" in link or "mlb" in link:
+                origem = "Shopee"
+            elif "mercadolivre" in link_original or "mlb" in link_original:
                 link_final = ML_AFILIADO
+                origem = "Mercado Livre"
             else:
                 continue
 
-            if link_final in ENVIADOS_CACHE:
+            if link_original in ENVIADOS_CACHE:
                 continue
 
             produtos.append({
                 "nome": titulo,
                 "link": link_final,
                 "imagem": imagem,
-                "origem": "Shopee" if "shopee" in link else "Mercado Livre"
+                "origem": origem
             })
-            ENVIADOS_CACHE.add(link_final)
+            ENVIADOS_CACHE.add(link_original)
 
         return produtos
 
@@ -99,7 +100,7 @@ def executar_bot():
 schedule.every(INTERVALO_MINUTOS).minutes.do(executar_bot)
 
 logging.info("🤖 Bot iniciado e agendado para rodar a cada %d minutos", INTERVALO_MINUTOS)
-executar_bot()  # Executa uma vez ao iniciar
+executar_bot()
 
 while True:
     schedule.run_pending()
