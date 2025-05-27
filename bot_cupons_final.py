@@ -11,6 +11,7 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo # Usando zoneinfo (Python 3.9+) para lidar com fuso horário
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin # Para resolver URLs relativas de imagens
 from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
@@ -27,19 +28,18 @@ def get_env_variable(var_name, default=None, required=True):
     """Busca uma variável de ambiente e opcionalmente exige sua presença."""
     value = os.getenv(var_name, default)
     if required and value is None:
-        logger.error(f"Erro Crítico: Variável de ambiente obrigatória '{var_name}' não definida.")
-        raise ValueError(f"Variável de ambiente obrigatória '{var_name}' não definida.")
+        logger.error(f"Erro Crítico: Variável de ambiente obrigatória \'{var_name}\' não definida.")
+        raise ValueError(f"Variável de ambiente obrigatória \'{var_name}\' não definida.")
     if value is None and default is not None:
-        logger.warning(f"Variável de ambiente '{var_name}' não definida, usando valor padrão: '{default}'.")
+        logger.warning(f"Variável de ambiente \'{var_name}\' não definida, usando valor padrão: \'{default}\'")
     return value
 
 try:
     TELEGRAM_TOKEN = get_env_variable("TELEGRAM_TOKEN")
     GROUP_ID = int(get_env_variable("GROUP_ID"))
-    # TODO: Verifique se estas URLs são a forma correta de gerar links de afiliado ou se são apenas a base.
-    # A lógica de geração de links abaixo pode precisar ser ajustada.
-    SHOPEE_AFILIADO_URL_BASE = get_env_variable("SHOPEE_AFILIADO_URL", required=False) # Tornando opcional por enquanto
-    ML_AFILIADO_URL_BASE = get_env_variable("ML_AFILIADO_URL", required=False) # Tornando opcional por enquanto
+    # IDs ou Nomes de Afiliado (Ajuste conforme necessário)
+    SHOPEE_AFILIADO_ID = get_env_variable("SHOPEE_AFILIADO_ID", required=False) # ID/Nome de afiliado Shopee
+    ML_AFILIADO_ID = get_env_variable("ML_AFILIADO_ID", required=False) # ID/Nome de afiliado Mercado Livre
     AMAZON_AFILIADO_ID = get_env_variable("AMAZON_AFILIADO_ID", default="maxx0448-20")
     SCHEDULE_INTERVAL_MINUTES = int(get_env_variable("SCHEDULE_INTERVAL_MINUTES", default=10))
     HORARIO_INICIO_ENVIO = int(get_env_variable("HORARIO_INICIO_ENVIO", default=7))
@@ -63,132 +63,240 @@ except Exception as e:
 ENVIADOS_CACHE = set()
 
 # --- Fontes de Ofertas e Configurações de Requisição ---
-URLS_FONTE = [
-    "https://www.divulgadorinteligente.com/pachecoofertas",
-    "https://promohub.com.br"
-]
+URLS_FONTE = {
+    "divulgadorinteligente": "https://www.divulgadorinteligente.com/pachecoofertas",
+    "promohub": "https://promohub.com.br"
+}
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 }
-REQUEST_TIMEOUT = 15 # Aumentando um pouco o timeout
+REQUEST_TIMEOUT = 20 # Aumentando um pouco mais o timeout
 
 # --- Funções Auxiliares --- 
-def converter_link_afiliado(link_original):
+def converter_link_afiliado(link_original, origem):
     """Converte um link original para um link de afiliado baseado na origem."""
+    global AMAZON_AFILIADO_ID, SHOPEE_AFILIADO_ID, ML_AFILIADO_ID
     if not link_original:
         return None
 
     try:
-        if "amazon.com.br" in link_original:
-            # Lógica para Amazon: Adiciona a tag de afiliado
+        if origem == "Amazon":
+            if not AMAZON_AFILIADO_ID:
+                logger.warning(f"AMAZON_AFILIADO_ID não definido. Usando link original: {link_original}")
+                return link_original
             if "tag=" in link_original:
-                # Se já tiver uma tag, verificar se é a nossa? Por enquanto, vamos apenas retornar.
-                # Poderia substituir a tag existente se necessário.
+                # Considerar substituir a tag existente se não for a sua?
+                logger.debug(f"Link já possui tag Amazon: {link_original}")
                 return link_original
             separador = "&" if "?" in link_original else "?"
             return f"{link_original}{separador}tag={AMAZON_AFILIADO_ID}"
 
-        elif "shopee.com.br" in link_original or "shopee.com" in link_original:
-            # TODO: Implementar a lógica CORRETA de afiliação da Shopee.
-            # Geralmente envolve pegar o link original e adicionar parâmetros ou usar uma API específica.
-            # A linha abaixo é um placeholder e PROVAVELMENTE INCORRETA.
-            # return SHOPEE_AFILIADO_URL_BASE # Exemplo INCORRETO
-            logger.warning(f"Lógica de afiliação Shopee não implementada. Usando link original: {link_original}")
-            return link_original # Retornando original por enquanto
+        elif origem == "Shopee":
+            # ** ATENÇÃO: Verifique a forma correta de gerar links Shopee **
+            # O método abaixo (adicionar af_sub_siteid) é uma suposição comum.
+            # Pode ser necessário usar a plataforma de afiliados Shopee ou outra API.
+            if not SHOPEE_AFILIADO_ID:
+                logger.warning(f"SHOPEE_AFILIADO_ID não definido. Usando link original: {link_original}")
+                return link_original
+            separador = "&" if "?" in link_original else "?"
+            logger.info(f"Aplicando ID de afiliado Shopee ({SHOPEE_AFILIADO_ID}) ao link: {link_original}")
+            return f"{link_original}{separador}af_sub_siteid={SHOPEE_AFILIADO_ID}"
 
-        elif "mercadolivre.com.br" in link_original or "mercadolivre.com" in link_original:
-            # TODO: Implementar a lógica CORRETA de afiliação do Mercado Livre.
-            # Pode envolver redirecionamento ou adição de parâmetros.
-            # A linha abaixo é um placeholder e PROVAVELMENTE INCORRETA.
-            # return ML_AFILIADO_URL_BASE # Exemplo INCORRETO
-            logger.warning(f"Lógica de afiliação Mercado Livre não implementada. Usando link original: {link_original}")
-            return link_original # Retornando original por enquanto
+        elif origem == "Mercado Livre":
+            # ** ATENÇÃO: Verifique a forma correta de gerar links Mercado Livre **
+            # A afiliação do ML pode ser complexa (redirecionamentos, parâmetros específicos).
+            # Retornando o link original por padrão. Verifique a documentação do programa.
+            if not ML_AFILIADO_ID:
+                 logger.warning(f"ML_AFILIADO_ID não definido. Usando link original: {link_original}")
+            else:
+                 # Se você descobrir um parâmetro simples (ex: &matt_word=SEU_ID), pode tentar adicioná-lo aqui.
+                 logger.warning(f"Lógica de afiliação Mercado Livre não implementada/verificada. Usando link original: {link_original}")
+            return link_original
 
         else:
-            # Se não for de nenhuma loja conhecida, retorna o link original
+            # Se não for de nenhuma loja conhecida para afiliação, retorna o link original
             return link_original
     except Exception as e:
-        logger.error(f"Erro ao tentar converter link de afiliado para '{link_original}': {e}")
+        logger.error(f"Erro ao tentar converter link de afiliado para \'{link_original}\' (Origem: {origem}): {e}")
         return link_original # Retorna o original em caso de erro
 
 def identificar_origem(link):
     """Identifica a loja de origem baseado no link."""
     if not link: return "Desconhecida"
-    if "shopee.com" in link: return "Shopee"
-    if "mercadolivre.com" in link: return "Mercado Livre"
-    if "amazon.com" in link: return "Amazon"
+    link_lower = link.lower()
+    if "shopee.com" in link_lower: return "Shopee"
+    if "mercadolivre.com" in link_lower: return "Mercado Livre"
+    if "amazon.com" in link_lower: return "Amazon"
     # TODO: Adicionar outras lojas se necessário (Magalu, Americanas, etc.)
+    # Ex: if "magazineluiza.com.br" in link_lower: return "Magazine Luiza"
     return "Outra"
+
+def extrair_dados_divulgadorinteligente(soup, base_url):
+    """Extrai dados do site divulgadorinteligente.com/pachecoofertas."""
+    produtos = []
+    # ** SELETOR PRINCIPAL: Ajuste fino pode ser necessário **
+    # Baseado na análise, parece que cada oferta está dentro de um <a> que contém detalhes.
+    # Vamos tentar selecionar 'a' tags que tenham um preço dentro (ex: 'R$').
+    # Uma abordagem mais robusta seria encontrar um container pai comum.
+    offer_links = soup.select("a[href*='amazon.com.br']") # Focando nos links da Amazon que parecem ser o conteúdo principal
+    logger.info(f"[divulgadorinteligente] Encontrados {len(offer_links)} links candidatos a ofertas.")
+
+    for link_tag in offer_links:
+        link_original = link_tag.get("href")
+        if not link_original:
+            continue
+
+        # Extração de dados (Seletores baseados na inspeção visual/markdown - PODEM QUEBRAR)
+        nome_produto_tag = link_tag.select_one("h4") # Tentativa: Nome parece estar em H4
+        nome_produto = nome_produto_tag.get_text(strip=True) if nome_produto_tag else "Produto sem nome"
+        # Remover preços do nome, se estiverem juntos
+        nome_produto = nome_produto.split("R$")[0].strip()
+
+        preco_desconto_tag = link_tag.select_one("h4 > span") # Tentativa: Preço com desconto em span dentro de h4
+        preco_desconto_str = preco_desconto_tag.get_text(strip=True) if preco_desconto_tag else "N/D"
+
+        preco_original_tag = link_tag.select_one("h4 > s") # Tentativa: Preço original em 's' dentro de h4
+        preco_original_str = preco_original_tag.get_text(strip=True) if preco_original_tag else "N/D"
+        # Se não achou em 's', talvez esteja junto com o desconto?
+        if preco_original_str == "N/D" and nome_produto_tag:
+             full_text = nome_produto_tag.get_text()
+             if 'R$' in full_text and len(full_text.split('R$')) > 2:
+                  try:
+                      preco_original_str = "R$" + full_text.split('R$')[1].strip()
+                      preco_desconto_str = "R$" + full_text.split('R$')[2].strip()
+                  except: pass # Ignora erro se a divisão falhar
+
+        imagem_tag = link_tag.select_one("img")
+        imagem_url = None
+        if imagem_tag:
+            img_src = imagem_tag.get("src") or imagem_tag.get("data-src")
+            if img_src:
+                imagem_url = urljoin(base_url, img_src) # Resolve URL relativa
+
+        origem = identificar_origem(link_original)
+        link_afiliado = converter_link_afiliado(link_original, origem)
+
+        if not link_afiliado:
+             logger.warning(f"[divulgadorinteligente] Não foi possível gerar link de afiliado para: {link_original}")
+             continue
+
+        if link_afiliado in ENVIADOS_CACHE:
+            continue
+
+        produto = {
+            "nome": nome_produto,
+            "imagem": imagem_url,
+            "link": link_afiliado,
+            "preco_original": preco_original_str,
+            "preco_desconto": preco_desconto_str,
+            "origem": origem,
+            "link_original": link_original
+        }
+        produtos.append(produto)
+        logger.debug(f"[divulgadorinteligente] Produto adicionado: {produto["nome"]}")
+
+    return produtos
+
+def extrair_dados_promohub(soup, base_url):
+    """Extrai dados do site promohub.com.br."""
+    produtos = []
+    # ** SELETOR PRINCIPAL: Ajuste fino pode ser necessário **
+    # Baseado na inspeção visual, cada oferta parece estar num card.
+    # Tentando um seletor comum para cards de produto.
+    offer_cards = soup.select("div.card, article.shadow-sm") # Tentando classes comuns
+    if not offer_cards:
+         offer_cards = soup.select("div[class*='-card'], div[class*='_offer']") # Tentativa mais genérica
+
+    logger.info(f"[promohub] Encontrados {len(offer_cards)} cards candidatos a ofertas.")
+
+    for card in offer_cards:
+        # Extração de dados (Seletores baseados na inspeção visual - PODEM QUEBRAR)
+        link_tag = card.select_one("a[href*='/p/'], a[href*='/l/'], a:contains('Pegar promoção')") # Link do botão ou link principal do card
+        if not link_tag:
+            continue
+        link_original = link_tag.get("href")
+        if not link_original:
+            continue
+        # PromoHub usa links internos /p/ ou /l/, precisamos resolvê-los ou buscar o link real na página de destino (mais complexo)
+        # Por enquanto, vamos assumir que o href é o link direto ou tratar como link interno
+        if link_original.startswith('/'):
+             link_original = urljoin(base_url, link_original)
+             # Idealmente, deveríamos visitar este link interno para pegar o link externo real
+             logger.warning(f"[promohub] Link interno encontrado: {link_original}. Pode não ser o link final da oferta.")
+
+        nome_produto_tag = card.select_one("h2, h3, p.title, p.font-semibold") # Tentativas comuns para título
+        nome_produto = nome_produto_tag.get_text(strip=True) if nome_produto_tag else "Produto sem nome"
+
+        preco_desconto_tag = card.select_one("span.price, div.price, p.text-xl, p.text-lg") # Tentativas para preço
+        preco_desconto_str = preco_desconto_tag.get_text(strip=True) if preco_desconto_tag else "N/D"
+        # Limpar o preço (ex: remover 'A partir de:')
+        preco_desconto_str = preco_desconto_str.split("R$")[-1].strip()
+        if preco_desconto_str and not preco_desconto_str.startswith("R$"):
+             preco_desconto_str = "R$ " + preco_desconto_str
+
+        # Preço original é menos comum, tentar encontrá-lo
+        preco_original_tag = card.select_one("span.original-price, s, del")
+        preco_original_str = preco_original_tag.get_text(strip=True) if preco_original_tag else "N/D"
+
+        imagem_tag = card.select_one("img")
+        imagem_url = None
+        if imagem_tag:
+            img_src = imagem_tag.get("src") or imagem_tag.get("data-src")
+            if img_src:
+                imagem_url = urljoin(base_url, img_src) # Resolve URL relativa
+
+        origem = identificar_origem(link_original)
+        # Se o link for interno do PromoHub, a origem pode ser incerta aqui.
+        # A origem real estaria na página de destino do link interno.
+
+        link_afiliado = converter_link_afiliado(link_original, origem)
+
+        if not link_afiliado:
+             logger.warning(f"[promohub] Não foi possível gerar link de afiliado para: {link_original}")
+             continue
+
+        if link_afiliado in ENVIADOS_CACHE:
+            continue
+
+        produto = {
+            "nome": nome_produto,
+            "imagem": imagem_url,
+            "link": link_afiliado,
+            "preco_original": preco_original_str,
+            "preco_desconto": preco_desconto_str,
+            "origem": origem,
+            "link_original": link_original
+        }
+        produtos.append(produto)
+        logger.debug(f"[promohub] Produto adicionado: {produto["nome"]}")
+
+    return produtos
 
 # --- Função Principal de Busca --- 
 def buscar_produtos():
     """Busca produtos nos sites de origem e extrai informações."""
-    produtos_encontrados = []
+    global ENVIADOS_CACHE # Acesso à variável global para leitura
+    produtos_encontrados_total = []
     logger.info(f"Iniciando busca em {len(URLS_FONTE)} fontes...")
 
-    for site_url in URLS_FONTE:
-        logger.info(f"Acessando {site_url}...")
+    for site_key, site_url in URLS_FONTE.items():
+        logger.info(f"Acessando {site_url} ({site_key})...")
         try:
             response = requests.get(site_url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
             response.raise_for_status() # Levanta erro para status HTTP 4xx ou 5xx
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            # TODO: INSPECIONAR O HTML DOS SITES E AJUSTAR OS SELETORES ABAIXO!
-            # A lógica a seguir é um EXEMPLO GENÉRICO e PRECISA SER ADAPTADA.
-            # Você precisa encontrar os elementos que contêm CADA oferta individualmente.
-            # Exemplo: Se cada oferta está numa <div class="produto">:
-            # itens_oferta = soup.select("div.produto")
-            # Se estiverem em <li> dentro de uma <ul id="lista-ofertas">:
-            # itens_oferta = soup.select("ul#lista-ofertas > li")
+            produtos_site = []
+            if site_key == "divulgadorinteligente":
+                produtos_site = extrair_dados_divulgadorinteligente(soup, site_url)
+            elif site_key == "promohub":
+                produtos_site = extrair_dados_promohub(soup, site_url)
+            else:
+                logger.warning(f"Nenhuma função de extração definida para a chave de site: {site_key}")
 
-            # Placeholder - Iterando sobre todos os links como no código original, MAS ISSO NÃO É O IDEAL.
-            # SUBSTITUA PELA LÓGICA COM SELETORES ESPECiFICOS ACIMA.
-            links_encontrados = soup.find_all("a", href=True)
-            logger.info(f"Encontrados {len(links_encontrados)} links em {site_url}. Processando...")
-
-            for link_tag in links_encontrados: # Substitua 'links_encontrados' por 'itens_oferta' após ajustar seletores
-                link_original = link_tag.get("href")
-                if not link_original or not link_original.startswith(('http://', 'https://')):
-                    continue # Ignora links inválidos ou relativos
-
-                # TODO: Extrair dados REAIS do produto a partir do 'link_tag' ou do 'item_oferta'
-                # Você precisará encontrar os elementos HTML dentro de cada oferta que contêm:
-                # - Nome do produto (ex: link_tag.find('h2', class_='nome-produto').text)
-                # - Preço original (ex: link_tag.find('span', class_='preco-antigo').text)
-                # - Preço com desconto (ex: link_tag.find('span', class_='preco-atual').text)
-                # - URL da imagem (ex: link_tag.find('img')['src'])
-
-                # Placeholder para os dados - SUBSTITUA PELA EXTRAÇÃO REAL
-                nome_produto = link_tag.get_text(strip=True) or "Produto sem nome"
-                preco_original_str = "N/D" # Exemplo: "R$ 149,90"
-                preco_desconto_str = "N/D" # Exemplo: "R$ 99,90"
-                imagem_url = None # Exemplo: "https://.../imagem.jpg"
-
-                # Tenta converter o link para afiliado
-                link_afiliado = converter_link_afiliado(link_original)
-                if not link_afiliado:
-                    logger.warning(f"Não foi possível gerar link de afiliado para: {link_original}")
-                    continue # Pula se não conseguir gerar o link
-
-                origem = identificar_origem(link_afiliado) # Identifica a origem pelo link já convertido (ou original)
-
-                # Verifica se o link já foi enviado
-                if link_afiliado in ENVIADOS_CACHE:
-                    # logger.debug(f"Link já enviado, pulando: {link_afiliado}")
-                    continue
-
-                produto = {
-                    "nome": nome_produto,
-                    "imagem": imagem_url,
-                    "link": link_afiliado,
-                    "preco_original": preco_original_str,
-                    "preco_desconto": preco_desconto_str,
-                    "origem": origem,
-                    "link_original": link_original # Guarda o original para referência, se necessário
-                }
-                produtos_encontrados.append(produto)
-                logger.debug(f"Produto adicionado: {produto['nome']} ({produto['origem']}) - {produto['link']}")
+            logger.info(f"Encontradas {len(produtos_site)} novas ofertas em {site_key}.")
+            produtos_encontrados_total.extend(produtos_site)
 
         except requests.exceptions.Timeout:
             logger.error(f"Timeout ao acessar {site_url}")
@@ -197,32 +305,42 @@ def buscar_produtos():
         except Exception as e:
             logger.error(f"Erro inesperado ao processar {site_url}: {e}", exc_info=True) # Adiciona traceback ao log
 
-    logger.info(f"Busca concluída. {len(produtos_encontrados)} novas ofertas encontradas.")
-    return produtos_encontrados
+    logger.info(f"Busca concluída. Total de {len(produtos_encontrados_total)} novas ofertas encontradas em todas as fontes.")
+    # Filtra novamente por cache aqui para garantir (caso a lógica de extração não filtre)
+    produtos_filtrados = [p for p in produtos_encontrados_total if p["link"] not in ENVIADOS_CACHE]
+    logger.info(f"{len(produtos_filtrados)} ofertas após filtro final de cache.")
+
+    return produtos_filtrados
 
 # --- Funções de Envio para o Telegram --- 
 async def enviar_produto_telegram(produto):
     """Formata e envia uma única oferta para o Telegram."""
-    # TODO: Ajustar o texto da legenda conforme desejado.
-    legenda = f"""
-🔥 <b>{produto['nome']}</b>
+    global bot, GROUP_ID # Acesso às variáveis globais
+    # Limpa e formata os preços
+    preco_original_fmt = produto.get("preco_original", "N/D").strip()
+    preco_desconto_fmt = produto.get("preco_desconto", "N/D").strip()
 
-🏬 Loja: <i>{produto['origem']}</i>
-💸 De: <s>{produto['preco_original']}</s>
-👉 Por: <b>{produto['preco_desconto']}</b>
+    # Monta a legenda
+    legenda = f"🔥 <b>{produto.get('nome', 'Oferta Imperdível!')}</b>\n\n"
+    legenda += f"🏬 Loja: <i>{produto.get('origem', 'Desconhecida')}</i>\n"
+    if preco_original_fmt != "N/D" and preco_original_fmt != preco_desconto_fmt:
+        legenda += f"💸 De: <s>{preco_original_fmt}</s>\n"
+    if preco_desconto_fmt != "N/D":
+        legenda += f"👉 Por: <b>{preco_desconto_fmt}</b>\n\n"
+    else:
+         legenda += "\n"
 
-🔗 <a href='{produto['link']}'>Clique aqui para comprar</a>
-
-📢 Compartilhe com amigos!
-👉 <a href='https://t.me/seugrupo'>Seu Grupo VIP</a>
-""" # TODO: Substitua 'seugrupo' pelo nome real do seu grupo/canal
+    legenda += f"🔗 <a href='{produto['link']}'>Clique aqui para comprar</a>\n\n"
+    # TODO: Substitua 'seugrupo' pelo nome real do seu grupo/canal ou remova/ajuste a linha
+    legenda += f"📢 Compartilhe com amigos!\n👉 <a href='https://t.me/seugrupo'>Seu Grupo VIP</a>"
 
     try:
-        if produto.get('imagem'): # Usa .get() para segurança caso a chave não exista
+        imagem = produto.get('imagem')
+        if imagem:
             logger.info(f"Enviando produto com imagem: {produto['nome']}")
             await bot.send_photo(
                 chat_id=GROUP_ID,
-                photo=produto['imagem'],
+                photo=imagem,
                 caption=legenda,
                 parse_mode=ParseMode.HTML
             )
@@ -239,10 +357,18 @@ async def enviar_produto_telegram(produto):
         logger.error(f"Erro do Telegram ao enviar '{produto['nome']}': {e}")
         if "Forbidden: bot was blocked by the user" in str(e):
              logger.error("O bot foi bloqueado ou removido do grupo/canal. Verifique as permissões.")
-             # Considerar parar o script ou notificar administrador
         elif "chat not found" in str(e):
              logger.error(f"Chat ID {GROUP_ID} não encontrado. Verifique o ID do grupo/canal.")
-        # TODO: Adicionar tratamento para outros erros comuns (ex: URL de imagem inválida)
+        elif "wrong file identifier/HTTP URL specified" in str(e) and imagem:
+             logger.error(f"URL da imagem inválida ou inacessível: {imagem}")
+             # Tentar enviar sem imagem como fallback?
+             logger.info(f"Tentando enviar '{produto['nome']}' sem a imagem...")
+             try:
+                 await bot.send_message(chat_id=GROUP_ID, text=legenda, parse_mode=ParseMode.HTML, disable_web_page_preview=False)
+                 return True # Sucesso no fallback
+             except Exception as fallback_e:
+                 logger.error(f"Erro ao tentar enviar sem imagem: {fallback_e}")
+        # TODO: Adicionar tratamento para outros erros comuns
     except Exception as e:
         logger.error(f"Erro inesperado ao enviar '{produto['nome']}' para o Telegram: {e}", exc_info=True)
 
@@ -250,6 +376,8 @@ async def enviar_produto_telegram(produto):
 
 async def verificar_e_enviar_ofertas():
     """Verifica o horário, busca ofertas e envia as novas para o Telegram."""
+    global ENVIADOS_CACHE, FUSO_HORARIO_BRASILIA, HORARIO_INICIO_ENVIO, HORARIO_FIM_ENVIO, SCHEDULE_INTERVAL_MINUTES, MAX_CACHE_SIZE # Declarando acesso às globais
+
     agora_brasilia = datetime.now(FUSO_HORARIO_BRASILIA)
     logger.info(f"Verificando horário: {agora_brasilia.strftime('%H:%M:%S')} (Brasília)")
 
@@ -267,23 +395,18 @@ async def verificar_e_enviar_ofertas():
     logger.info(f"Enviando {len(novos_produtos)} novas ofertas para o Telegram...")
     enviados_nesta_rodada = 0
     for produto in novos_produtos:
-        if produto['link'] in ENVIADOS_CACHE:
-            logger.warning(f"Link {produto['link']} encontrado novamente, mas já está no cache. Pulando.") # Não deveria acontecer se buscar_produtos já filtra
-            continue
-
+        # A verificação de cache já foi feita em buscar_produtos
         sucesso = await enviar_produto_telegram(produto)
         if sucesso:
-            ENVIADOS_CACHE.add(produto['link'])
+            ENVIADOS_CACHE.add(produto['link']) # Adiciona o link de afiliado ao cache
             enviados_nesta_rodada += 1
             # Limpeza simples do cache para evitar crescimento indefinido
             if len(ENVIADOS_CACHE) > MAX_CACHE_SIZE:
                 logger.info(f"Cache atingiu o tamanho máximo ({MAX_CACHE_SIZE}). Limpando os mais antigos...")
-                # Converte para lista, remove os mais antigos, converte de volta para set
                 cache_list = list(ENVIADOS_CACHE)
                 ENVIADOS_CACHE = set(cache_list[len(cache_list)-MAX_CACHE_SIZE:])
-                # Uma alternativa seria usar uma estrutura de dados mais adequada como collections.OrderedDict ou um cache LRU
 
-            await asyncio.sleep(2) # Pausa entre envios para evitar flood
+            await asyncio.sleep(3) # Pausa um pouco maior entre envios
         else:
             logger.error(f"Falha ao enviar produto: {produto['nome']}. Link não será adicionado ao cache.")
             await asyncio.sleep(5) # Pausa maior em caso de erro
@@ -293,8 +416,8 @@ async def verificar_e_enviar_ofertas():
 # --- Loop Principal Assíncrono com Agendador --- 
 async def loop_principal():
     """Configura o agendamento e mantém o loop de verificação rodando."""
+    global SCHEDULE_INTERVAL_MINUTES, HORARIO_INICIO_ENVIO, HORARIO_FIM_ENVIO, FUSO_HORARIO_BRASILIA # Acesso às globais
     logger.info("Configurando agendamento da tarefa...")
-    # Agenda a função assíncrona corretamente usando asyncio.create_task
     schedule.every(SCHEDULE_INTERVAL_MINUTES).minutes.do(
         lambda: asyncio.create_task(verificar_e_enviar_ofertas())
     )
@@ -321,4 +444,5 @@ if __name__ == "__main__":
         exit(1)
     finally:
         logger.info("Bot encerrado.")
+
 
