@@ -110,50 +110,41 @@ def identificar_origem(link):
     if "amazon.com" in link_lower: return "Amazon"
     return "Outra"
 
-# --- Funções de Extração (COM NOVOS SELETORES v5) ---
+# --- Funções de Extração (COM NOVOS SELETORES v6) ---
 def extrair_dados_divulgadorinteligente(soup, base_url):
-    """Extrai dados do site divulgadorinteligente.com/pachecoofertas (Seletores v5)."""
+    """Extrai dados do site divulgadorinteligente.com/pachecoofertas (Seletores v6 - Mantém v5)."""
     produtos = []
-    # Seletor v5: Mantém o seletor de links que funcionou, foca na extração interna.
     offer_links = soup.select("a.text-reset.d-block")
-    logger.info(f"[divulgadorinteligente] Encontrados {len(offer_links)} links candidatos a ofertas (seletores v5).")
+    logger.info(f"[divulgadorinteligente] Encontrados {len(offer_links)} links candidatos a ofertas (seletores v6).")
 
     for link_tag in offer_links:
         link_original = link_tag.get("href")
         if not link_original or not link_original.startswith("http"):
             continue
 
-        # Extração de dados v5 - Refinada
         nome = "N/D"
         preco_original = "N/D"
         preco_desconto = "N/D"
 
-        # Nome: Tenta pegar o texto principal dentro do h4, excluindo preços e textos pequenos
         nome_tag = link_tag.select_one("h4")
         if nome_tag:
-            # Remove tags de preço (s, span com R$) antes de pegar o texto
-            for price_tag in nome_tag.select("s, span"): # Seleciona s e span
+            temp_nome_tag = BeautifulSoup(str(nome_tag), 'html.parser').h4 # Cria cópia para não modificar original
+            for price_tag in temp_nome_tag.select("s, span"): # Seleciona s e span na cópia
                  if "R$" in price_tag.get_text():
-                      price_tag.decompose() # Remove a tag do DOM temporariamente
-            # Pega o texto restante, que deve ser o nome
-            nome = nome_tag.get_text(strip=True)
-            # Tenta limpar textos residuais como 'há cerca de...' se estiverem no nome
+                      price_tag.decompose()
+            nome = temp_nome_tag.get_text(strip=True)
             nome = re.sub(r"^há cerca de.*", "", nome).strip()
 
-        # Preços: Busca novamente no link_tag original (sem decompor)
-        preco_original_tag = link_tag.select_one("h4 s") # Busca <s> dentro do h4
+        preco_original_tag = link_tag.select_one("h4 s")
         if preco_original_tag and "R$" in preco_original_tag.get_text():
             preco_original = preco_original_tag.get_text(strip=True)
 
-        # Busca spans com R$ para preço com desconto
         price_spans = link_tag.select("h4 span")
         discount_prices = [span.get_text(strip=True) for span in price_spans if "R$" in span.get_text()]
         if discount_prices:
-            preco_desconto = discount_prices[-1] # Pega o último preço como desconto
-            # Se não achou original em <s> e tem 2+ spans de preço, pega o primeiro como original
+            preco_desconto = discount_prices[-1]
             if preco_original == "N/D" and len(discount_prices) >= 2:
                 preco_original = discount_prices[0]
-        # Fallback: Se não achou span, tenta pegar qualquer texto com R$ que não seja o original
         elif nome_tag:
              all_price_texts = [p.strip() for p in nome_tag.find_all(string=True) if "R$" in p]
              for p_text in all_price_texts:
@@ -161,7 +152,6 @@ def extrair_dados_divulgadorinteligente(soup, base_url):
                        preco_desconto = p_text
                        break
 
-        # Imagem
         imagem_tag = link_tag.select_one("img")
         imagem_url = None
         if imagem_tag:
@@ -171,7 +161,6 @@ def extrair_dados_divulgadorinteligente(soup, base_url):
             if nome == "N/D" or nome == "":
                 nome = imagem_tag.get("alt", "Oferta").strip()
 
-        # Limpeza final
         nome = nome if nome and nome != "N/D" else "Oferta"
         preco_original = preco_original if preco_original != "N/D" else ""
         preco_desconto = preco_desconto if preco_desconto != "N/D" else ""
@@ -200,35 +189,50 @@ def extrair_dados_divulgadorinteligente(soup, base_url):
             "link_original": link_original
         }
         produtos.append(produto)
-        logger.debug(f"[divulgadorinteligente] Produto adicionado: {produto["nome"]}")
+        logger.debug(f"[divulgadorinteligente] Produto adicionado: {produto['nome']}")
 
     return produtos
 
 def extrair_dados_promohub(soup, base_url):
-    """Extrai dados do site promohub.com.br (Seletores v5)."""
+    """Extrai dados do site promohub.com.br (Seletores v6 - Última tentativa)."""
     produtos = []
-    # ** NOVO SELETOR v5: Tenta um seletor mais abrangente para os cards e filtra depois **
-    # Seleciona todos os articles, depois verifica se têm os elementos esperados.
-    offer_cards = soup.select("article")
-    logger.info(f"[promohub] Encontrados {len(offer_cards)} <article> candidatos a ofertas (seletores v5).")
+    # ** NOVO SELETOR v6: Tenta encontrar um container mais externo e iterar nos filhos **
+    # Inspecionando, parece haver um <main> ou um <div> com um grid.
+    # Tentativa 1: Grid com classes comuns (Tailwind?)
+    container = soup.select_one("div[class*='grid']")
+    if not container:
+        # Tentativa 2: O elemento <main>
+        container = soup.find("main")
+    if not container:
+        # Tentativa 3: O body inteiro (menos provável)
+        container = soup.body
 
-    cards_processados = 0
-    for card in offer_cards:
-        # Verificação interna se é um card de oferta válido
+    if not container:
+        logger.error("[promohub] Não foi possível encontrar um container principal para as ofertas.")
+        return produtos
+
+    # Agora, dentro do container, busca por elementos que *parecem* ser cards (ex: <article> ou <div> com imagem e preço)
+    # Usaremos uma abordagem mais flexível, buscando por elementos com preço e link 'Pegar promoção'
+    potential_cards = container.find_all(lambda tag: 
+        tag.name in ['article', 'div'] and 
+        tag.select_one("p[class*='text-blue-600']") and # Tem preço azul
+        (tag.select_one("a[href*='/l/']") or tag.find("a", string=lambda t: t and "Pegar promoção" in t)) # Tem link /l/ ou botão
+    )
+
+    logger.info(f"[promohub] Encontrados {len(potential_cards)} elementos candidatos a ofertas (seletores v6).")
+
+    for card in potential_cards:
+        # Extração interna (similar à v5, mas aplicada aos `potential_cards`)
         nome_tag = card.select_one("p.font-semibold.text-gray-700")
         preco_desconto_tag = card.select_one("p.text-blue-600.font-bold")
-        link_tag = card.select_one("a[href*='/l/']") or card.find("a", string=lambda t: "Pegar promoção" in t)
+        link_tag = card.select_one("a[href*='/l/']") or card.find("a", string=lambda t: t and "Pegar promoção" in t)
 
-        # Se não tiver nome, preço E link, provavelmente não é um card de oferta
         if not (nome_tag and preco_desconto_tag and link_tag):
-            logger.debug("[promohub] Article pulado por não parecer um card de oferta válido.")
+            logger.debug("[promohub] Candidato pulado por falta de nome, preço ou link interno.")
             continue
 
-        cards_processados += 1
         link_original = link_tag.get("href")
-
         if not link_original:
-            logger.debug("[promohub] Card válido pulado por falta de href no link principal.")
             continue
 
         if link_original.startswith("/"):
@@ -280,9 +284,8 @@ def extrair_dados_promohub(soup, base_url):
             "link_original": link_original
         }
         produtos.append(produto)
-        logger.debug(f"[promohub] Produto adicionado: {produto["nome"]}")
+        logger.debug(f"[promohub] Produto adicionado: {produto['nome']}")
 
-    logger.info(f"[promohub] {cards_processados} articles processados como cards de oferta válidos.")
     return produtos
 
 # --- Função Principal de Busca ---
@@ -314,6 +317,10 @@ def buscar_produtos():
     logger.info(f"Busca concluída. Total de {len(produtos_encontrados_total)} ofertas encontradas antes do filtro final.")
     produtos_filtrados = [p for p in produtos_encontrados_total if p["link"] not in ENVIADOS_CACHE]
     logger.info(f"{len(produtos_filtrados)} ofertas após filtro final de cache.")
+    # Correção no log: Verificar se produtos_filtrados está vazio antes de logar 'Nenhuma nova oferta'
+    if not produtos_filtrados and produtos_encontrados_total: # Se encontrou algo mas foi filtrado pelo cache
+        logger.info("Todas as ofertas encontradas já estavam no cache.")
+    # O log de 'Nenhuma nova oferta encontrada' será feito dentro de verificar_e_enviar_ofertas se a lista final for vazia
     return produtos_filtrados
 
 # --- Funções de Envio para o Telegram ---
@@ -379,9 +386,9 @@ async def verificar_e_enviar_ofertas():
         logger.info(f"Fora do horário de envio ({HORARIO_INICIO_ENVIO:02d}h - {HORARIO_FIM_ENVIO:02d}h). Próxima verificação em {SCHEDULE_INTERVAL_MINUTES} min.")
         return
     logger.info("Dentro do horário de envio. Iniciando busca de ofertas...")
-    novos_produtos = buscar_produtos()
+    novos_produtos = buscar_produtos() # Esta função agora retorna apenas produtos *não* no cache
     if not novos_produtos:
-        logger.info("Nenhuma nova oferta encontrada nesta verificação.")
+        logger.info("Nenhuma nova oferta encontrada (ou todas já estavam no cache) nesta verificação.")
         return
     logger.info(f"Enviando {len(novos_produtos)} novas ofertas para o Telegram...")
     enviados_nesta_rodada = 0
