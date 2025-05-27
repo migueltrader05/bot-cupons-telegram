@@ -7,6 +7,7 @@ import schedule
 import os
 import asyncio
 import logging
+from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 from telegram import Bot
 
@@ -91,7 +92,7 @@ async def enviar_produto_estilizado(prod):
 💸 De: <s>{prod['preco_original']}</s>
 👉 Por: <b>{prod['preco_desconto']}</b>
 
-🛍️ <a href='{prod['link']}'>Clique aqui para comprar</a>
+🛙 <a href='{prod['link']}'>Clique aqui para comprar</a>
 
 📢 Compartilhe com amigos e receba mais ofertas:
 👉 <a href='https://t.me/seugrupo'>Entrar no grupo VIP</a>
@@ -106,9 +107,9 @@ async def enviar_produto_estilizado(prod):
         logger.error(f"Erro ao enviar mensagem: {e}")
 
 async def enviar_ofertas():
-    hora_atual = time.localtime().tm_hour
-    if hora_atual < 7 or hora_atual >= 23:
-        logger.info("⏰ Fora do horário permitido (7h–23h). Ignorando execução.")
+    hora_brasilia = datetime.utcnow() - timedelta(hours=3)
+    if not (7 <= hora_brasilia.hour < 23):
+        logger.info("Fora do horário de envio (07h às 23h). Ignorando execução.")
         return
 
     logger.info("🔍 Buscando ofertas...")
