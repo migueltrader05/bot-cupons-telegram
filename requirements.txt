@@ -1,4 +1,4 @@
-python-telegram-bot==20.6
-beautifulsoup4
+python-telegram-bot==20.7
 requests
+beautifulsoup4
 schedule
